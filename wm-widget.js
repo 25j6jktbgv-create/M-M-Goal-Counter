@@ -49,7 +49,7 @@ function baseWidget() {
 }
 
 async function buildWidget(cfg) {
-  const family = cfg.family || "medium";          // manueller Lauf => medium
+  const family = cfg.family || "medium";   // manueller Lauf => medium
   return family === "small" ? buildSmall(cfg) : buildMedium(cfg);
 }
 
