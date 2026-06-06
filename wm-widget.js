@@ -8,8 +8,9 @@ const LEAGUE    = 1;        // 1 = FIFA World Cup
 const SEASON    = 2022;     // <<< auf 2026 ändern, sobald die Quelle dafür steht
 const TARGET    = 253;      // Ziel: Gesamttore (ohne Elfmeterschießen)
 const GER_ID    = 25;       // api-football Team-ID Deutschland
-const DEMO_MODE = true;     // true: Mock-Spiele zeigen, solange keine echten kommenden Spiele da sind
-const DEMO_ONE  = false;    // true: nur EIN Demo-Spiel (testet den Voll-Breite-Balken)
+const DEMO_MODE = true;     // Mock-Spiele zeigen, solange keine echten kommenden Spiele da sind
+const DEMO_ONE  = false;    // nur EIN Demo-Spiel (testet den Voll-Breite-Balken)
+const DEMO_LIVE = false;    // Demo-Spiel als LIVE darstellen (testet Live-Anzeige)
 
 // ----- Maße / Farben -----
 const BAR_W = 134, CARD_W = 134, FOOT_W = 150;
@@ -18,6 +19,9 @@ const ACCENT = new Color("#a7d7c5");
 const DIM    = new Color("#7fb8a3");
 const FILL   = new Color("#34d39a");
 const TRACK  = new Color("#ffffff", 0.16);
+const RED    = new Color("#ff5a5f");
+
+const LIVE_SET = ["1H","2H","HT","ET","BT","P","LIVE","SUSP","INT"];
 
 // ----- Länder: Name -> [Flagge, Kürzel] (erweiterbar) -----
 const COUNTRY = {
@@ -48,6 +52,23 @@ const CITY_FLAG = {
 };
 function cityFlag(c){ if (CITY_FLAG[c]) return CITY_FLAG[c]; if (SEASON===2022) return "🇶🇦"; return ""; }
 
+// ----- Runde -> deutsches Label -----
+function roundLabel(r){
+  if (!r) return "";
+  const s = r.toLowerCase();
+  if (s.indexOf("group")===0){
+    const m = r.match(/group\s+([A-Za-z])\b/);
+    return m ? "Gruppe "+m[1].toUpperCase() : "Gruppenphase";
+  }
+  if (s.includes("round of 32")) return "Sechzehntelfinale";
+  if (s.includes("round of 16")) return "Achtelfinale";
+  if (s.includes("quarter"))     return "Viertelfinale";
+  if (s.includes("semi"))        return "Halbfinale";
+  if (s.includes("3rd place") || s.includes("third place")) return "Spiel um Platz 3";
+  if (s.includes("final"))       return "Finale";
+  return r;
+}
+
 // ----- API -----
 async function apiGet(path, apiKey){
   const req = new Request("https://v3.football.api-sports.io" + path);
@@ -61,18 +82,17 @@ async function loadData(apiKey){
   const list = res.response || [];
   let goals=0, pen=0, played=0;
   for (const f of list){
-    const gh=f.goals.home, ga=f.goals.away;
+    const st = f.fixture.status.short;
+    const gh = f.goals.home, ga = f.goals.away;
     if (gh!==null && ga!==null){
-      goals += gh+ga; played++;
-      if (f.fixture.status.short==="PEN" && f.score && f.score.penalty){
+      goals += gh+ga;                                  // zählt auch Live-Tore
+      if (["FT","AET","PEN"].includes(st)) played++;
+      if (st==="PEN" && f.score && f.score.penalty){
         pen += (f.score.penalty.home||0) + (f.score.penalty.away||0);
       }
     }
   }
-  const upcoming = list
-    .filter(f => f.fixture.status.short==="NS")
-    .sort((a,b) => a.fixture.timestamp - b.fixture.timestamp);
-  return { goals, withPen: goals+pen, penGoals: pen, played, upcoming };
+  return { goals, withPen: goals+pen, penGoals: pen, played, fixtures: list };
 }
 
 async function loadKing(apiKey){
@@ -86,36 +106,56 @@ async function loadKing(apiKey){
 
 // ----- Spiel-Karten -----
 function toCard(f){
-  return { id:f.fixture.id, ts:f.fixture.timestamp, home:f.teams.home.name,
-           away:f.teams.away.name, city:(f.fixture.venue && f.fixture.venue.city) || "" };
+  const st = f.fixture.status.short;
+  return {
+    id:f.fixture.id, status:st, live:LIVE_SET.includes(st),
+    ts:f.fixture.timestamp, home:f.teams.home.name, away:f.teams.away.name,
+    city:(f.fixture.venue && f.fixture.venue.city) || "",
+    round:f.league.round || "",
+    hg:f.goals.home, ag:f.goals.away, minute:f.fixture.status.elapsed
+  };
 }
 function mockCards(){
-  const t1 = Math.floor(new Date("2026-06-16T19:00:00Z").getTime()/1000); // 21:00 deutsche Zeit
-  const t2 = Math.floor(new Date("2026-06-11T01:00:00Z").getTime()/1000); // 03:00 deutsche Zeit
-  const both = [
-    { id:-1, ts:t1, home:"Germany", away:"Japan",   city:"Dallas" },
-    { id:-2, ts:t2, home:"Mexico",  away:"Ecuador", city:"Mexico-Stadt" }
-  ];
-  return DEMO_ONE ? [both[1]] : both;
+  const t1 = Math.floor(new Date("2026-06-16T19:00:00Z").getTime()/1000); // 21:00 dt. Zeit
+  const t2 = Math.floor(new Date("2026-06-11T01:00:00Z").getTime()/1000); // 03:00 dt. Zeit
+  const de = { id:-1, status:"NS", live:false, ts:t1, home:"Germany", away:"Japan",
+               city:"Dallas", round:"Round of 16", hg:null, ag:null, minute:null };
+  const wm = { id:-2, status:"NS", live:false, ts:t2, home:"Mexico", away:"Ecuador",
+               city:"Mexico-Stadt", round:"Group A - 1", hg:null, ag:null, minute:null };
+  if (DEMO_LIVE){ de.live=true; de.status="2H"; de.hg=1; de.ag=0; de.minute=67; }
+  return DEMO_ONE ? [wm] : [de, wm];
 }
-function pickCards(upcoming){
-  let de = upcoming.find(f => f.teams.home.id===GER_ID || f.teams.away.id===GER_ID
-                          || f.teams.home.name==="Germany" || f.teams.away.name==="Germany");
-  let wm = upcoming[0] || null;
-  if (wm && de && wm.fixture.id===de.fixture.id) wm = upcoming.find(f => f.fixture.id!==de.fixture.id) || null;
-  const cards = [];
-  if (de) cards.push(toCard(de));
-  if (wm && (!de || wm.fixture.id!==de.fixture.id)) cards.push(toCard(wm));
+function pickCards(list){
+  const isGER = f => f.teams.home.id===GER_ID || f.teams.away.id===GER_ID
+                  || f.teams.home.name==="Germany" || f.teams.away.name==="Germany";
+  const live = list.filter(f => LIVE_SET.includes(f.fixture.status.short))
+                   .sort((a,b)=>a.fixture.timestamp-b.fixture.timestamp);
+  const ns   = list.filter(f => f.fixture.status.short==="NS")
+                   .sort((a,b)=>a.fixture.timestamp-b.fixture.timestamp);
+
+  // DE-Karte: Live bevorzugt, sonst nächstes
+  const deF = live.find(isGER) || ns.find(isGER) || null;
+  // WM-Karte: irgendein Live (≠ DE) bevorzugt, sonst nächstes (≠ DE)
+  const other = f => !deF || f.fixture.id!==deF.fixture.id;
+  const wmF = live.find(other) || ns.find(other) || null;
+
+  const cards=[];
+  if (deF) cards.push(toCard(deF));
+  if (wmF && (!deF || wmF.fixture.id!==deF.fixture.id)) cards.push(toCard(wmF));
   if (cards.length===0 && DEMO_MODE) return mockCards();
   return cards;
 }
 
-// ----- Zeitformat (lokale = deutsche Zeit) -----
+// ----- Zeit / Live-Label -----
 function fmtKickoff(ts){
-  const df = new DateFormatter();
-  df.locale = "de_DE";
-  df.dateFormat = "EEE dd.MM · HH:mm";
+  const df = new DateFormatter(); df.locale="de_DE"; df.dateFormat="EEE dd.MM · HH:mm";
   return df.string(new Date(ts*1000));
+}
+function liveLabel(c){
+  if (c.status==="HT") return "🔴 Halbzeit";
+  if (c.status==="P")  return "🔴 Elfmeterschießen";
+  if (c.minute!=null)  return `🔴 LIVE · ${c.minute}'`;
+  return "🔴 LIVE";
 }
 
 // ----- Render-Helfer -----
@@ -128,36 +168,38 @@ function txt(p,s,size,color,w){
 function addBar(parent, width, frac){
   const h = 7, r = h/2;
   const ctx = new DrawContext();
-  ctx.size = new Size(width, h);
-  ctx.opaque = false;
-  ctx.respectScreenScale = true;
-
-  // Spur (volle Breite)
-  const track = new Path();
-  track.addRoundedRect(new Rect(0, 0, width, h), r, r);
-  ctx.addPath(track);
-  ctx.setFillColor(TRACK);
-  ctx.fillPath();
-
-  // Füllung (bündig von links)
+  ctx.size = new Size(width, h); ctx.opaque = false; ctx.respectScreenScale = true;
+  const track = new Path(); track.addRoundedRect(new Rect(0,0,width,h), r, r);
+  ctx.addPath(track); ctx.setFillColor(TRACK); ctx.fillPath();
   const fw = Math.max(h, Math.round(width * Math.max(0, Math.min(1, frac))));
-  const fill = new Path();
-  fill.addRoundedRect(new Rect(0, 0, fw, h), r, r);
-  ctx.addPath(fill);
-  ctx.setFillColor(FILL);
-  ctx.fillPath();
-
-  const img = parent.addImage(ctx.getImage());
-  img.imageSize = new Size(width, h);
+  const fill = new Path(); fill.addRoundedRect(new Rect(0,0,fw,h), r, r);
+  ctx.addPath(fill); ctx.setFillColor(FILL); ctx.fillPath();
+  const img = parent.addImage(ctx.getImage()); img.imageSize = new Size(width, h);
 }
-function addMatchCard(p,c){
-  const card=p.addStack(); card.layoutVertically(); card.size=new Size(CARD_W,52);
-  card.cornerRadius=12; card.backgroundColor=new Color("#ffffff",0.07); card.setPadding(7,10,7,10);
-  txt(card, fmtKickoff(c.ts), 11, ACCENT, "semi");
-  const tt=txt(card, `${teamFlag(c.home)} ${teamCode(c.home)} – ${teamCode(c.away)} ${teamFlag(c.away)}`, 13, WHITE, "bold");
-  tt.lineLimit=1; tt.minimumScaleFactor=0.7;
-  const cf=cityFlag(c.city);
-  const ct=txt(card, (cf?cf+" ":"")+c.city, 10, DIM, null); ct.lineLimit=1;
+function addMatchCard(parent, c){
+  const card=parent.addStack(); card.layoutVertically(); card.size=new Size(CARD_W,52);
+  card.cornerRadius=12; card.setPadding(7,10,7,10);
+  if (c.live){
+    card.backgroundColor=new Color("#ff5a5f",0.14);
+    card.borderWidth=1; card.borderColor=new Color("#ff5a5f",0.55);
+  } else {
+    card.backgroundColor=new Color("#ffffff",0.07);
+  }
+
+  // Zeile 1: Zeit oder Live
+  if (c.live) txt(card, liveLabel(c), 10.5, RED, "bold");
+  else        txt(card, fmtKickoff(c.ts), 11, ACCENT, "semi");
+
+  // Zeile 2: Teams (mit Stand wenn live)
+  const teams = c.live
+    ? `${teamFlag(c.home)} ${teamCode(c.home)} ${c.hg||0}–${c.ag||0} ${teamCode(c.away)} ${teamFlag(c.away)}`
+    : `${teamFlag(c.home)} ${teamCode(c.home)} – ${teamCode(c.away)} ${teamFlag(c.away)}`;
+  const tt=txt(card, teams, 13, WHITE, "bold"); tt.lineLimit=1; tt.minimumScaleFactor=0.6;
+
+  // Zeile 3: Stadt · Runde
+  const cf=cityFlag(c.city), rl=roundLabel(c.round);
+  const bottom=(cf?cf+" ":"")+c.city+(rl?" · "+rl:"");
+  const ct=txt(card, bottom, 10, DIM, null); ct.lineLimit=1; ct.minimumScaleFactor=0.7;
 }
 
 // ----- Widget -----
@@ -182,7 +224,7 @@ async function buildSmall(cfg){
 }
 async function buildMedium(cfg){
   const [d,king]=await Promise.all([loadData(cfg.apiKey),loadKing(cfg.apiKey)]);
-  const cards=pickCards(d.upcoming);
+  const cards=pickCards(d.fixtures);
   const oneCard=cards.length<=1;
   const rest=TARGET-d.goals;
   const frac=Math.max(0,Math.min(1,d.goals/TARGET));
