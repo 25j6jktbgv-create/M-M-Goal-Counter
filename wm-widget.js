@@ -125,9 +125,30 @@ function txt(p,s,size,color,w){
          : w==="med"?Font.mediumSystemFont(size):Font.systemFont(size);
   t.textColor=color; return t;
 }
-function addBar(p,width,frac){
-  const track=p.addStack(); track.size=new Size(width,7); track.cornerRadius=3.5; track.backgroundColor=TRACK;
-  const fill=track.addStack(); fill.size=new Size(Math.max(4,Math.round(width*frac)),7); fill.cornerRadius=3.5; fill.backgroundColor=FILL;
+function addBar(parent, width, frac){
+  const h = 7, r = h/2;
+  const ctx = new DrawContext();
+  ctx.size = new Size(width, h);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+
+  // Spur (volle Breite)
+  const track = new Path();
+  track.addRoundedRect(new Rect(0, 0, width, h), r, r);
+  ctx.addPath(track);
+  ctx.setFillColor(TRACK);
+  ctx.fillPath();
+
+  // Füllung (bündig von links)
+  const fw = Math.max(h, Math.round(width * Math.max(0, Math.min(1, frac))));
+  const fill = new Path();
+  fill.addRoundedRect(new Rect(0, 0, fw, h), r, r);
+  ctx.addPath(fill);
+  ctx.setFillColor(FILL);
+  ctx.fillPath();
+
+  const img = parent.addImage(ctx.getImage());
+  img.imageSize = new Size(width, h);
 }
 function addMatchCard(p,c){
   const card=p.addStack(); card.layoutVertically(); card.size=new Size(CARD_W,52);
