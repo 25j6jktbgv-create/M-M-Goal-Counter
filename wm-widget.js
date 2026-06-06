@@ -6,7 +6,7 @@
 
 // ----- KONFIG -----
 const TARGET    = 253;     // Ziel: Gesamttore (ohne Elfmeterschießen)
-const DEMO_LIVE = false;   // true: nächstes Spiel als LIVE darstellen (Test)
+const DEMO_LIVE = true;   // true: nächstes Spiel als LIVE darstellen (Test)
 const TSDB_KEY  = "123";   // TheSportsDB öffentlicher Test-Key (bei Bedarf eigenen Gratis-Key eintragen)
 const TSDB_LEAGUE = 4429;  // FIFA World Cup
 const TSDB_SEASON = "2026";
