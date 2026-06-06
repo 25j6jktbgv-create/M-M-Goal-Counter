@@ -56,10 +56,7 @@ function cityFlag(c){ if (CITY_FLAG[c]) return CITY_FLAG[c]; if (SEASON===2022) 
 function roundLabel(r){
   if (!r) return "";
   const s = r.toLowerCase();
-  if (s.indexOf("group")===0){
-    const m = r.match(/group\s+([A-Za-z])\b/);
-    return m ? "Gruppe "+m[1].toUpperCase() : "Gruppenphase";
-  }
+  if (s.indexOf("group")===0)    return "Gruppenphase";
   if (s.includes("round of 32")) return "Sechzehntelfinale";
   if (s.includes("round of 16")) return "Achtelfinale";
   if (s.includes("quarter"))     return "Viertelfinale";
@@ -133,9 +130,7 @@ function pickCards(list){
   const ns   = list.filter(f => f.fixture.status.short==="NS")
                    .sort((a,b)=>a.fixture.timestamp-b.fixture.timestamp);
 
-  // DE-Karte: Live bevorzugt, sonst nächstes
   const deF = live.find(isGER) || ns.find(isGER) || null;
-  // WM-Karte: irgendein Live (≠ DE) bevorzugt, sonst nächstes (≠ DE)
   const other = f => !deF || f.fixture.id!==deF.fixture.id;
   const wmF = live.find(other) || ns.find(other) || null;
 
@@ -177,7 +172,7 @@ function addBar(parent, width, frac){
   const img = parent.addImage(ctx.getImage()); img.imageSize = new Size(width, h);
 }
 function addMatchCard(parent, c){
-  const card=parent.addStack(); card.layoutVertically(); card.size=new Size(CARD_W,52);
+  const card=parent.addStack(); card.layoutVertically(); card.size=new Size(CARD_W,50);
   card.cornerRadius=12; card.setPadding(7,10,7,10);
   if (c.live){
     card.backgroundColor=new Color("#ff5a5f",0.14);
@@ -196,10 +191,9 @@ function addMatchCard(parent, c){
     : `${teamFlag(c.home)} ${teamCode(c.home)} – ${teamCode(c.away)} ${teamFlag(c.away)}`;
   const tt=txt(card, teams, 13, WHITE, "bold"); tt.lineLimit=1; tt.minimumScaleFactor=0.6;
 
-  // Zeile 3: Stadt · Runde
-  const cf=cityFlag(c.city), rl=roundLabel(c.round);
-  const bottom=(cf?cf+" ":"")+c.city+(rl?" · "+rl:"");
-  const ct=txt(card, bottom, 10, DIM, null); ct.lineLimit=1; ct.minimumScaleFactor=0.7;
+  // Zeile 3: nur Stadt (Runde steht über der Kachel)
+  const cf=cityFlag(c.city);
+  const ct=txt(card, (cf?cf+" ":"")+c.city, 10, DIM, null); ct.lineLimit=1; ct.minimumScaleFactor=0.7;
 }
 
 // ----- Widget -----
@@ -255,9 +249,15 @@ async function buildMedium(cfg){
 
   body.addSpacer();
 
-  // rechte Spalte
+  // rechte Spalte — Runde ÜBER der jeweiligen Kachel
   const right=body.addStack(); right.layoutVertically();
-  for (let i=0;i<cards.length;i++){ if(i>0) right.addSpacer(8); addMatchCard(right,cards[i]); }
+  for (let i=0;i<cards.length;i++){
+    if (i>0) right.addSpacer(6);
+    const rl = roundLabel(cards[i].round);
+    if (rl){ const rh=txt(right, rl.toUpperCase(), 8.5, ACCENT, "semi"); rh.lineLimit=1; rh.minimumScaleFactor=0.7; }
+    right.addSpacer(2);
+    addMatchCard(right, cards[i]);
+  }
 
   if (!oneCard) w.addSpacer();
 
