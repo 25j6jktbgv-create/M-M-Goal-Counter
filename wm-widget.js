@@ -1,13 +1,14 @@
 // ============================================================
 //  WM GOAL COUNTER — Widget-Logik (GitHub, frei editierbar)
-//  Daten: football-data.org (Tore/Spielplan/Live) + TheSportsDB (Stadt)
+//  Daten: football-data.org (Spielplan/Endstände/Torschützen)
+//         + TheSportsDB (Stadt + LIVE-Scores während der Spiele)
 //  Token (football-data) kommt vom Loader.
 // ============================================================
 
 // ----- KONFIG -----
 const TARGET    = 253;     // Ziel: Gesamttore (ohne Elfmeterschießen)
 const DEMO_LIVE = false;   // true: nächstes Spiel als LIVE darstellen (Test)
-const TSDB_KEY  = "123";   // TheSportsDB öffentlicher Test-Key (bei Bedarf eigenen Gratis-Key eintragen)
+const TSDB_KEY  = "123";   // TheSportsDB öffentlicher Test-Key
 const TSDB_LEAGUE = 4429;  // FIFA World Cup
 const TSDB_SEASON = "2026";
 
@@ -19,6 +20,9 @@ const DIM    = new Color("#7fb8a3");
 const FILL   = new Color("#34d39a");
 const TRACK  = new Color("#ffffff", 0.16);
 const RED    = new Color("#ff5a5f");
+
+// TheSportsDB-Status, die "läuft gerade" bedeuten
+const TSDB_LIVE = ["1H","2H","HT","ET","BT","P","LIVE"];
 
 // ----- Länder: Name -> Flagge (Kürzel liefert die API) -----
 const FLAG = {
@@ -77,28 +81,21 @@ async function fdGet(path, token){
   req.timeoutInterval = 15;
   return await req.loadJSON();
 }
-async function loadData(token){
+async function loadFd(token){
   const res = await fdGet("/competitions/WC/matches", token);
-  const list = res.matches || [];
-  let goals=0, played=0;
-  for (const m of list){
-    const h=m.score.fullTime.home, a=m.score.fullTime.away;
-    if (h!==null && a!==null){
-      goals += h+a;                                  // zählt auch Live-Tore
-      if (m.status==="FINISHED" || m.status==="AWARDED") played++;
-    }
-  }
-  return { goals, played, matches:list };
+  return res.matches || [];
 }
 async function loadKing(token){
   try{
     const res = await fdGet("/competitions/WC/scorers", token);
     const t = res.scorers && res.scorers[0];
     if (!t) return null;
-    return { name:t.player.name, goals:t.goals, country:t.player.nationality };
+    // Flagge vom TEAM, für das er trifft (nicht Nationalität des Spielers)
+    const country = (t.team && t.team.name) || t.player.nationality;
+    return { name:t.player.name, goals:t.goals, country };
   }catch(e){ return null; }
 }
-async function loadVenues(){
+async function loadTsdb(){
   try{
     const req = new Request(`https://www.thesportsdb.com/api/v1/json/${TSDB_KEY}/eventsseason.php?id=${TSDB_LEAGUE}&s=${TSDB_SEASON}`);
     req.timeoutInterval = 12;
@@ -109,6 +106,37 @@ async function loadVenues(){
   }catch(e){ return {}; }
 }
 
+// ----- Matching football-data <-> TheSportsDB -----
+function norm(s){ return (s||"").toLowerCase().replace(/[^a-z]/g,""); }
+function findTsdb(home, away, dateIso, byDate){
+  const list = byDate[(dateIso||"").slice(0,10)];
+  if (!list) return null;
+  const h=norm(home), a=norm(away);
+  return list.find(e=>norm(e.strHomeTeam)===h)
+      || list.find(e=>norm(e.strAwayTeam)===a)
+      || (list.length===1 ? list[0] : null);
+}
+function tsdbIsLive(ev){ return !!ev && TSDB_LIVE.includes((ev.strStatus||"").toUpperCase()); }
+
+// ----- Tore zählen: football-data + Live-Ergänzung aus TheSportsDB -----
+function countGoals(fdMatches, byDate){
+  let goals=0, played=0;
+  for (const m of fdMatches){
+    const h=m.score.fullTime.home, a=m.score.fullTime.away;
+    if (h!==null && a!==null){
+      goals += h+a;
+      if (m.status==="FINISHED" || m.status==="AWARDED") played++;
+    } else {
+      // football-data hat (noch) nichts -> läuft das Spiel laut TheSportsDB?
+      const ev = findTsdb(m.homeTeam.name, m.awayTeam.name, m.utcDate, byDate);
+      if (tsdbIsLive(ev)){
+        goals += (parseInt(ev.intHomeScore)||0) + (parseInt(ev.intAwayScore)||0);
+      }
+    }
+  }
+  return { goals, played };
+}
+
 // ----- Spiel-Karten -----
 function toCard(m){
   const st=m.status;
@@ -117,35 +145,46 @@ function toCard(m){
     ts:m.utcDate, stage:m.stage, group:m.group,
     home:m.homeTeam.name, away:m.awayTeam.name,
     homeTla:m.homeTeam.tla, awayTla:m.awayTeam.tla,
-    hg:m.score.fullTime.home, ag:m.score.fullTime.away
+    hg:m.score.fullTime.home, ag:m.score.fullTime.away, minute:null
   };
 }
-function pickCards(matches){
+function pickCards(matches, byDate){
   const isGER = m => m.homeTeam.name==="Germany" || m.awayTeam.name==="Germany"
                   || m.homeTeam.tla==="GER" || m.awayTeam.tla==="GER";
-  const isLive = m => m.status==="IN_PLAY" || m.status==="PAUSED";
-  const isUp   = m => m.status==="TIMED" || m.status==="SCHEDULED";
-  const byDate = (a,b) => new Date(a.utcDate) - new Date(b.utcDate);
-  const live = matches.filter(isLive).sort(byDate);
-  const up   = matches.filter(isUp).sort(byDate);
-  const deM = live.find(isGER) || up.find(isGER) || null;
+  const fdLive = m => m.status==="IN_PLAY" || m.status==="PAUSED";
+  // "läuft" = football-data sagt live ODER TheSportsDB sagt live (fd hängt hinterher)
+  const isLive = m => fdLive(m) || (m.status==="TIMED" &&
+                    tsdbIsLive(findTsdb(m.homeTeam.name, m.awayTeam.name, m.utcDate, byDate)));
+  const isUp   = m => (m.status==="TIMED" || m.status==="SCHEDULED") && !isLive(m);
+  const byTs   = (a,b) => new Date(a.utcDate) - new Date(b.utcDate);
+
+  const live = matches.filter(isLive).sort(byTs);
+  const up   = matches.filter(isUp).sort(byTs);
+  const deM  = live.find(isGER) || up.find(isGER) || null;
   const other = m => !deM || m.id!==deM.id;
-  const wmM = live.find(other) || up.find(other) || null;
+  const wmM  = live.find(other) || up.find(other) || null;
+
   const cards=[];
   if (deM) cards.push(toCard(deM));
   if (wmM && (!deM || wmM.id!==deM.id)) cards.push(toCard(wmM));
+
+  // Live-Daten aus TheSportsDB anreichern (Score, Status, ggf. Minute)
+  for (const c of cards){
+    const ev = findTsdb(c.home, c.away, c.ts, byDate);
+    if (tsdbIsLive(ev)){
+      c.live = true;
+      c.tsdbStatus = (ev.strStatus||"").toUpperCase();
+      if (c.hg===null || c.hg===undefined) c.hg = parseInt(ev.intHomeScore)||0;
+      if (c.ag===null || c.ag===undefined) c.ag = parseInt(ev.intAwayScore)||0;
+      const min = parseInt(ev.strProgress);
+      if (!isNaN(min)) c.minute = min;
+    }
+    if (ev){
+      const v = venueToCity(ev.strVenue);
+      if (v){ c.city=v.city; c.cityFlag=v.flag; }
+    }
+  }
   return cards;
-}
-function norm(s){ return (s||"").toLowerCase().replace(/[^a-z]/g,""); }
-function attachCity(c, byDate){
-  const d=(c.ts||"").slice(0,10);
-  const list=byDate[d]; if(!list) return;
-  const h=norm(c.home), a=norm(c.away);
-  const ev = list.find(e=>norm(e.strHomeTeam)===h)
-          || list.find(e=>norm(e.strAwayTeam)===a)
-          || (list.length===1 ? list[0] : null);
-  const v = ev ? venueToCity(ev.strVenue) : null;
-  if (v){ c.city=v.city; c.cityFlag=v.flag; }
 }
 
 // ----- Zeit / Live -----
@@ -153,7 +192,13 @@ function fmtKickoff(iso){
   const df=new DateFormatter(); df.locale="de_DE"; df.dateFormat="EEE dd.MM · HH:mm";
   return df.string(new Date(iso));
 }
-function liveLabel(c){ return c.status==="PAUSED" ? "🔴 Pause" : "🔴 LIVE"; }
+function liveLabel(c){
+  if (c.tsdbStatus==="HT") return "🔴 Halbzeit";
+  if (c.tsdbStatus==="P")  return "🔴 Elfmeterschießen";
+  if (c.status==="PAUSED") return "🔴 Pause";
+  if (c.minute!=null)      return `🔴 LIVE · ${c.minute}'`;
+  return "🔴 LIVE";
+}
 
 // ----- Render -----
 function txt(p,s,size,color,w){
@@ -200,7 +245,8 @@ async function buildWidget(cfg){
   return (cfg.family||"medium")==="small" ? buildSmall(cfg) : buildMedium(cfg);
 }
 async function buildSmall(cfg){
-  const d=await loadData(cfg.apiKey);
+  const [fd,byDate]=await Promise.all([loadFd(cfg.apiKey),loadTsdb()]);
+  const d=countGoals(fd,byDate);
   const w=baseWidget();
   txt(w,"WM 2026",13,WHITE,"med"); w.addSpacer(4);
   txt(w,String(d.goals),46,WHITE,"bold");
@@ -209,10 +255,10 @@ async function buildSmall(cfg){
   return w;
 }
 async function buildMedium(cfg){
-  const [d,king,byDate]=await Promise.all([loadData(cfg.apiKey),loadKing(cfg.apiKey),loadVenues()]);
-  const cards=pickCards(d.matches);
-  for (const c of cards) attachCity(c, byDate);
-  if (DEMO_LIVE && cards[0]){ cards[0].live=true; cards[0].status="IN_PLAY"; cards[0].hg=1; cards[0].ag=0; }
+  const [fd,king,byDate]=await Promise.all([loadFd(cfg.apiKey),loadKing(cfg.apiKey),loadTsdb()]);
+  const d=countGoals(fd,byDate);
+  const cards=pickCards(fd,byDate);
+  if (DEMO_LIVE && cards[0]){ cards[0].live=true; cards[0].hg=1; cards[0].ag=0; }
   const oneCard=cards.length<=1;
   const rest=TARGET-d.goals;
   const frac=Math.max(0,Math.min(1,d.goals/TARGET));
