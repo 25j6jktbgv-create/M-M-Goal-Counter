@@ -82,18 +82,35 @@ async function fdGet(path, token){
   return await req.loadJSON();
 }
 async function loadFd(token){
-  const res = await fdGet("/competitions/WC/matches", token);
-  return res.matches || [];
+  const fm = FileManager.local();
+  const p = fm.joinPath(fm.documentsDirectory(), "wm-fd-cache.json");
+  try{
+    const res = await fdGet("/competitions/WC/matches", token);
+    if (res.matches && res.matches.length){
+      fm.writeString(p, JSON.stringify(res.matches));   // letzte gute Antwort merken
+      return res.matches;
+    }
+    throw new Error("leere Antwort (Rate-Limit?)");
+  }catch(e){
+    if (fm.fileExists(p)) return JSON.parse(fm.readString(p));  // Fallback: Cache
+    return [];
+  }
 }
 async function loadKing(token){
+  const fm = FileManager.local();
+  const p = fm.joinPath(fm.documentsDirectory(), "wm-king-cache.json");
   try{
     const res = await fdGet("/competitions/WC/scorers", token);
     const t = res.scorers && res.scorers[0];
-    if (!t) return null;
-    // Flagge vom TEAM, für das er trifft (nicht Nationalität des Spielers)
+    if (!t) throw new Error("kein Scorer");
     const country = (t.team && t.team.name) || t.player.nationality;
-    return { name:t.player.name, goals:t.goals, country };
-  }catch(e){ return null; }
+    const king = { name:t.player.name, goals:t.goals, country };
+    fm.writeString(p, JSON.stringify(king));
+    return king;
+  }catch(e){
+    if (fm.fileExists(p)) return JSON.parse(fm.readString(p));
+    return null;
+  }
 }
 async function loadTsdb(){
   try{
@@ -168,7 +185,7 @@ function pickCards(matches, byDate){
   if (deM) cards.push(toCard(deM));
   if (wmM && (!deM || wmM.id!==deM.id)) cards.push(toCard(wmM));
 
-  // Live-Daten aus TheSportsDB anreichern (Score, Status, ggf. Minute)
+  // Live-Daten aus TheSportsDB anreichern (Score, Status, ggf. Minute) + Stadt
   for (const c of cards){
     const ev = findTsdb(c.home, c.away, c.ts, byDate);
     if (tsdbIsLive(ev)){
