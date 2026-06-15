@@ -35,7 +35,7 @@ const FLAG = {
   "Tunisia":"🇹🇳","Italy":"🇮🇹","Norway":"🇳🇴","Colombia":"🇨🇴","Egypt":"🇪🇬","Nigeria":"🇳🇬",
   "Algeria":"🇩🇿","Chile":"🇨🇱","Peru":"🇵🇪","Sweden":"🇸🇪","Austria":"🇦🇹","Ukraine":"🇺🇦",
   "Turkey":"🇹🇷","Ivory Coast":"🇨🇮","Paraguay":"🇵🇾","New Zealand":"🇳🇿","Jordan":"🇯🇴",
-  "Uzbekistan":"🇺🇿","South Africa":"🇿🇦","Panama":"🇵🇦","Honduras":"🇭🇳","Cape Verde":"🇨🇻",
+  "Uzbekistan":"🇺🇿","South Africa":"🇿🇦","Panama":"🇵🇦","Honduras":"🇭🇳","Cape Verde":"🇨🇻","Cape Verde Islands":"🇨🇻","Congo DR":"🇨🇩",
   "Curacao":"🇨🇼","Curaçao":"🇨🇼","Haiti":"🇭🇹","Jamaica":"🇯🇲","Venezuela":"🇻🇪","Bolivia":"🇧🇴",
   "Czech Republic":"🇨🇿","Czechia":"🇨🇿","Greece":"🇬🇷","Romania":"🇷🇴","Hungary":"🇭🇺",
   "Slovakia":"🇸🇰","Slovenia":"🇸🇮","Iraq":"🇮🇶","United Arab Emirates":"🇦🇪","Oman":"🇴🇲",
